@@ -1,0 +1,358 @@
+---
+title: "Online Purchasing Analysis"
+author: "Abby Austin, Greg Cervenak, Emily Harvey, Emma Phillipson, Thejas Suvarna"
+date: "December 10, 2019"
+output: html_document
+---
+
+```{r}
+data <- read.csv("online_shopping.csv")
+```
+
+## Data Cleaning
+
+```{r}
+# create a random sample for training and test data
+# use set.seed to use the same random number sequence
+set.seed(12345)
+data$Revenue <- as.factor(data$Revenue)
+data$Weekend <- as.factor(data$Weekend)
+
+str(data)
+summary(data)
+
+library(caret)
+
+# set N/As and negatives to median
+
+handle_invalid <- function(x){
+   x[x < 0] <- NA
+   x[is.na(x)] <- median(x, na.rm =TRUE)
+   return(x)
+}
+
+
+data$Administrative <- handle_invalid(data$Administrative)
+data$Administrative_Duration <- handle_invalid(data$Administrative_Duration)
+data$Informational <- handle_invalid(data$Informational)
+data$Informational_Duration <- handle_invalid(data$Informational_Duration)
+data$ProductRelated <- handle_invalid(data$ProductRelated)
+data$ProductRelated_Duration <- handle_invalid(data$ProductRelated_Duration)
+data$BounceRates <- handle_invalid(data$BounceRates)
+data$ExitRates <- handle_invalid(data$ExitRates)
+
+
+#randomize data set 
+data <- data[order(runif(nrow(data))), ]
+
+str(data)
+summary(data)
+
+# split the data frames
+train <- data[1:ceiling(nrow(data)*0.8), ]
+test <- data[(ceiling(nrow(data)*0.8) +1 ):nrow(data), ]
+
+str(train)
+summary(train)
+
+str(test)
+summary(test)
+
+# check the proportion of class variable
+prop.table(table(train$Revenue))
+prop.table(table(test$Revenue))
+```
+
+When exploring the data, we found some categorical variables that we know could be important, but in the dataset they are integers and we are unsure what the integer values match to. These variables are operating system, browser, region, and traffic type. Knowing what these integers correlate to could help us interpret the results and potentially provide more insights to retail companies based on the predictions of our models.
+
+## Decision Tree
+
+```{r}
+
+#Build Simple Decision Tree 
+library(C50)
+library(irr)
+m1 <- C5.0(train[-18], as.factor(train$Revenue))
+m1
+
+summary(m1)
+
+plot(m1)
+
+pred <- predict(m1, test)
+
+library(gmodels)
+
+confusionMatrix(pred, test$Revenue)
+#Kappa is 0.5645.
+
+#Boost Model to Improve Kappa 
+m2 <- C5.0(train[-18], as.factor(train$Revenue),
+                       trials = 10)
+m2
+
+summary(m2)
+plot(m2)
+
+pred_1 <- predict(m2, test)
+
+confusionMatrix(pred_1, test$Revenue)
+#Kappa is 0.5661 - a marginal improvement.
+
+```
+
+The decision tree model provides us some insight into what are important drivers of purchase decisions. The improved model provides a kappa of .566 and a prediction that 288 individuals will make a purchase. 
+
+In the improved model bounce rates, exit rates, and page values are all very important in predicting if an individual may purchase something. Bounce rates and exit rates may represent the actual ease of use of a website - if it glitches or is not user friendly you may be less likely to purchase from a website. High bounce rates logically make sense in that individuals won't purchase as a purchase usually requires a visit to more than one page on your site. This high bounce rate could be caused by an unattractive UI or in links directly to products could even be caused by size sell outs or pricing, with the additional information that a consumer gets at this stage. Exit rates also make sense for similar reasons and lead to similar implications. Page values may provide a proxy for percieved reliableness of the website because more linked pages may mean that there are several recommendations or other sites that lead you here. 
+
+Beyond this month and traffic type are important. This makes sense because there are certain times of year, like those around the holidays that will impact your decision in whether or not you should purchase. Additionally, traffic type, or the source by which an individual arrived at the site, is important. Some examples of this would include banners or directly typing in the URL. It makes sense that this would be an important value because some individuals may see something that catches their eye in an advertisement on another site, while others may have directly sought out this website. In most cases in which you are prepared to make a purchase, you are likely going to come to this site by a manner other than an advertisement on another site. 
+
+Furthermore, ProductRelated and VisitorType are the next most important. ProductRelated is the number of pages that an individual will visit. Again, this makes logical sense that individuals who visit more pages related to a product may have done more of their due diligence and may feel more comfortable in making a purchase. Additionally, most individuals will feel more comfortable making a purchase when it is not their first time on a site, instead having time to get others' opinions or do individual research.
+
+From this model, it seems that most of the potential predictors of purchasing behavior are very logical, even if they wouldn't have been our initial guess. However, some areas don't align with expectations of recent online shopping trends. We often hear about impulse purchases increasing as check out gets easier or virtual payment plans are implemented. Except in this case, there are several signals showcasing that research and previous visits are actually important predictors, meaning that consumers are clearly thinking about their purchases before they complete them. 
+
+These insights overall provide several implications for a potential client. For example, investing in relationships with individuals who blog about or review products may be beneficial in providing both more product related information about your product, different types of links to your products, and more links to your webpage may increase completed purchases, rather than purchasing an advertisement on the side of a page. Additionally, the more information that is provided about products up front may reduce the Bounce Rate and the Exit Rate if it is related to pricing or other important purchasing decision variables. At this point, we may be able to see if these rates remain high or low, potentially leading to investment in website design and improving the user experience on the website to improve behavior. 
+
+The most beneficial takeaway lies in the relative importance of each factor. For example, with 100% of trees accounting for Bounce Rates, Exit Rates, and PageValues, it appears that site optimization and relatedness to other pages are the most important metrics for companies to consider. This likely contradicts many of the areas that firms attempt to spend money on marketing, such as to specific customer segments (visitor type) or for flash sales on weekends. Understanding the major drivers makes our client more efficient. 
+
+## Logistic Model
+
+```{r}
+
+test_log <- test
+
+m1 <- glm(Revenue ~ ., data=train, family ="binomial")
+summary(m1)
+
+predictions <- predict(m1, newdata = test_log, type = "response")
+
+library(e1071)
+library(caret)
+
+test_log$Revenue <- as.factor(test_log$Revenue)
+levels(test_log$Revenue) <- c("No", "Purchase")
+predictions <- ifelse(predictions >= 0.5, 1, 0)
+predictions <- as.factor(predictions)
+levels(predictions) <- c("No", "Purchase")
+
+confusionMatrix(predictions, test_log$Revenue)
+
+m2 <- glm(Revenue ~ BounceRates + ExitRates + PageValues + Month + VisitorType, data = train, family = "binomial")
+summary(m2)
+
+predictions_1 <- predict(m2, newdata = test_log, type = "response")
+
+predictions_1 <- ifelse(predictions_1 >= 0.5, 1, 0)
+predictions_1 <- as.factor(predictions_1)
+levels(predictions_1) <- c("No", "Purchase")
+
+confusionMatrix(predictions_1, test_log$Revenue)
+
+
+m3 <- glm(Revenue ~ ExitRates + PageValues + Month + VisitorType + I(ProductRelated*ProductRelated_Duration) + OperatingSystems + Browser, data = train, family = "binomial")
+summary(m3)
+
+predictions_2 <- predict(m3, newdata = test_log, type = "response")
+
+library(e1071)
+
+levels(test_log$Revenue) <- c("No", "Purchase")
+predictions_2 <- ifelse(predictions_2 >= 0.5, 1, 0)
+predictions_2 <- as.factor(predictions_2)
+levels(predictions_2) <- c("No", "Purchase")
+
+confusionMatrix(predictions_2, test_log$Revenue)
+
+```
+Our first model includes all of the variables so that we can begin to see which are the most important. This initial model has an accuracy of about 89% percent and a kappa value of around 0.48. The biggest issue in this model is the number of false negatives, which predict that a customer will not make a purchase when in fact they did. This is problematic because we could have better optimized to target a client who will indeed purchase but we failed to do so, or recognize the method of doing so, with our model. This results in potential lost revenue.
+
+Our next model includes only those variables that were significant in the first model. In this model, it becomes clear that the exit rates for customers have the largest negative impact on their purchasing habits, and the month of November has the strongest positive effect. The kappa value and accuracy for this model are roughly the same as for the first model, and the biggest issue continues to be the number of false negatives.
+
+In our final model, we tried several interactions between variables, but the only one that proved significant is the interaction between whether the search was product related, and the duration of time on the page. This variable interaction has a positive effect on whether a customer will make a purchase. In general, there were no changes in the significant variables in the model and their impact on the purchase decision. The accuracy and kappa are slightly higher in this model, but the largest issue is still the number of false negatives. This could be in part due to the very limited number of purchases in our data, leaving fewer of these situations on which to train the model. In general, this logistic model is most important for identifying which variables are most significant in determining whether or not a customer will make a purchase. This is important because it could lead to more direct marketing techniques based on the data collected in the model.
+
+The most surprising insights coming out of the logistic model are the significance of certain months. We had expected, as most people would, that the month of December would be very significant and have a positive correlation with purchasing, as a result of holiday shopping. However, in our final model, December actually has a negative coefficient. This might indicate that in December, more people delay holiday shopping and are rushed and choose to go into stores, rather than purchase online. Further, from a managerial recommendation standpoint, it appears that since the majority of purchasing is now done in November (instead of December), distributors should allocate staffing to be heavier in November ahead of the holiday rush rather than starting in December. Additionally, May and March both have negative coefficients, indicating that these are slower months for online shopping. Therefore, the business implication here is to increase advertising and marketing efforts in these slower months, in order to increase sales. In the last model we also see that browser and operating system are significant variables. However, the characterization of these variables is missing from the dataset, making us unable to actually determine which browsers and operating systems have effects. We were very surprised that these variables were significant, and ultimately it would be important to get more information and determine which browsers and operating systems have a positive effect, and which have a negative effect. Our team’s hypothesis is that the browsers and operating system that are more likely to result in a purchase are likely Safari and Mac OS as they command a price premium, potentially resulting in more discretionary income for spending. Once again, this would be an interesting part of our analysis in future phases.
+
+## KNN Model
+
+```{r}
+
+library(gmodels)
+library(class)
+
+# Splitting the data into test and train
+train_d <- as.data.frame(model.matrix( ~.-1, data = train))
+test_d <- as.data.frame(model.matrix( ~.-1, data = test))
+
+normalize <- function(x) {
+return ((x - min(x)) / (max(x) - min(x)))
+}
+
+# Normalizing the data and renaming the response variable (revenue)
+train_n <- as.data.frame(lapply(train_d[-28], normalize))
+test_n <- as.data.frame(lapply(test_d[-28], normalize))
+train_label <- train_d$Revenue
+test_label <- test_d$Revenue
+
+# Creating predictions with a KNN model
+data_pred <- knn(train = train_n, test = test_n,
+cl = train_label, k=3)
+
+# Building a confusion matrix with the results
+confusionMatrix(data_pred, as.factor(test_label))
+```
+
+We tested many different k values and ultimately arrived at 3, as this creates the highest kappa for our model. Having a low number of clusters value might not completely eliminate all of the "noise", but as this is the value that leads to the highest kappa, we believe it is the best option.
+
+Although we are unable to evaluate this model for specific managerial implications, we can assess the accuracy of the model and analyze the confusion matrix results to determine if using this type of model would be useful for managers predicting purchase behavior of different online shoppers in the future. When evaluating the confusion matrix, the most alarming thing is the high number of false negatives. As discussed in the analysis of our logistic regression, this could be attributed to having such a small number of acutal purchases in the dataset. This model will ultimately contribute to our combined model at the end of this project report. 
+
+## SVM Model
+
+```{r}
+
+library(kernlab)
+
+train_svm <- train
+test_svm <- test
+
+train_svm$Revenue <- ifelse(train$Revenue == TRUE, 1, 0)
+
+data_classifier <- ksvm(Revenue ~ ., data = train_svm , kernel = "vanilladot")
+data_predictions <- as.numeric(predict(data_classifier, test_svm))
+data_predictions[data_predictions <= 0.5] <- 0
+data_predictions[data_predictions > 0.5] <- 1
+data_predictions <- as.factor(data_predictions)
+levels(data_predictions) <- c("No", "Purchase")
+test_svm$Revenue <- as.factor(test_svm$Revenue)
+levels(test_svm$Revenue) <- c("No", "Purchase")
+summary(test_svm)
+summary(data_predictions)
+table(data_predictions, test_svm$Revenue)
+agreement <- data_predictions == test_svm$Revenue
+prop.table(table(agreement))
+
+confusionMatrix(as.factor(data_predictions), as.factor(test_svm$Revenue))
+
+#We first used the “vanilladot” kernel in our SVM, and got a kappa of 0.3645 and an accuracy of 0.8844. This is low compated to our other models. We will next try the “rbfdot” kernel to see if that will give us a more accurate model.
+
+data_classifier <- ksvm(Revenue ~ ., data = train_svm , kernel = "rbfdot")
+data_predictions_1 <- as.numeric(predict(data_classifier, test_svm))
+data_predictions_1[data_predictions_1 <= 0.5] <- 0
+data_predictions_1[data_predictions_1 > 0.5] <- 1
+data_predictions_1 <- as.factor(data_predictions_1)
+levels(data_predictions_1) <- c("No", "Purchase")
+test_svm$Revenue <- as.factor(test_svm$Revenue)
+levels(test_svm$Revenue) <- c("No", "Purchase")
+summary(test_svm)
+summary(data_predictions_1)
+table(data_predictions_1, test_svm$Revenue)
+agreement <- data_predictions_1 == test_svm$Revenue
+prop.table(table(agreement))
+
+confusionMatrix(as.factor(data_predictions_1), as.factor(test_svm$Revenue))
+```
+
+When using the “rbfdot” kernel in our SVM, it resulted in a kappa of 0.5112 and an accuracy of 89.58%. This is better than what the “vanilla dot” kernel returned. While the SVM model does not provide any managerial implications for us, we built the model to figure out if it would provide better predictions than those that did provide the same managerial implications. However, with a kappa on the improved model of .5112, it is not more accurate than some of our other models. For this reason, it is not our sole model to consider in conclusions, and will rather contribute to the voting models. 
+
+
+## Neural Network
+```{r}
+
+# custom normalization function
+normalize <- function(x) { 
+  return((x - min(x)) / (max(x) - min(x)))
+}
+
+buy_train <- train
+buy_test <- test
+
+buy_train$Revenue <- ifelse(buy_train$Revenue == TRUE, 1, 0)
+buy_test$Revenue <- ifelse(buy_test$Revenue == TRUE, 1, 0)
+
+buy_train <- as.data.frame(model.matrix( ~.-1, data = buy_train))
+buy_test <- as.data.frame(model.matrix( ~.-1, data = buy_test))
+
+# apply normalization to entire data frame
+buy_train <- as.data.frame(lapply(buy_train, normalize))
+buy_test <- as.data.frame(lapply(buy_test, normalize))
+
+## Step 3: Training a model on the data ----
+# train the neuralnet model
+library(neuralnet)
+
+# simple ANN with only a single hidden neuron
+buy_model <- neuralnet(formula = Revenue ~ PageValues + VisitorTypeReturning_Visitor + ProductRelated + ExitRates + WeekendTRUE + Administrative
+                       + MonthAug + MonthDec + MonthFeb + MonthJul + MonthJune + MonthMar + MonthMay + MonthNov + MonthOct + MonthSep
+                   , threshold = 0.03, stepmax = 1e+07, data = buy_train)
+
+
+# visualize the network topology
+plot(buy_model)
+
+## Step 4: Evaluating model performance ----
+# obtain model results
+model_results <- compute(buy_model, buy_test[1:(ncol(buy_test)-1)])
+# obtain predicted strength values
+predicted_purchase <- model_results$net.result
+# examine the correlation between predicted and actual values
+cor(predicted_purchase, buy_test$Revenue)
+
+predicted_purchase[predicted_purchase <= 0.5] <- 0
+predicted_purchase[predicted_purchase > 0.5] <- 1
+
+
+confusionMatrix(as.factor(predicted_purchase), as.factor(buy_test$Revenue))
+
+```
+
+We also utilized the neural network model in order to attempt to describe the complex relationships that exist between various variables that cannot be realized through a basic logistic regression, svm, or other models used above. Though we lose interpretability through this model, it is clear by analyzing the weights, that once again, PageValues is the most significant factor that affects whether a purchase was made or not. This indicates that “important” pages which are characterized by pages that are linked to by many other pages that are also “reputable”, defined by pages that are commonly referred to, are pages that drive many purchasing decisions. A common example of a page like this in the scope of online shopping is one that gets linked to by many product review sites like consumer reports or digitaltrends.com. This indicates to customers that the product is a “good” product and also shows that people rely on others judgement to help them make a purchase when there is a large multitude of options. By evaluating the confusion matrix, it is clear that this is our most accurate model in terms of kappa. What is especially important to note is that there are more items misclassified as purchased though they were not than items misclassified as not purchased even though they were. In the context of targeted advertising this is good because we don’t want to miss out on advertising to customers who may buy because our model said that they weren’t going to.
+
+## Voting Model Combination
+```{r}
+
+decision_1 <- pred_1
+logistic_2 <- predictions_2
+knn_0 <- data_pred
+svm_1 <- data_predictions_1
+nn_0 <- predicted_purchase
+
+decision_1 <- ifelse(decision_1 == "TRUE", 1, 0)
+logistic_2 <- ifelse(logistic_2 == "Purchase", 1, 0)
+knn_0 <- ifelse(knn_0 == "1", 1, 0)
+svm_1 <- ifelse(svm_1 == "Purchase", 1, 0)
+nn_0 <- nn_0
+
+combined_model <- decision_1 + logistic_2 + knn_0 + svm_1 + nn_0
+combined_model <- ifelse(combined_model >= 3, 1, 0)
+
+confusionMatrix(as.factor(combined_model), as.factor(buy_test$Revenue))
+
+```
+
+This voting model provides a kappa value of .52, which is lower than some of our individual models kappa values. We initially built the voting model to see if it would provide a way to utilize all of the different models to create a better model. However, from the lower kappa model we see that this does not provide the most valuable predictions. Due to this, we are going to take the three highest kappa models and try to combine those to create a "super" majority voting model. 
+
+## "Super" Voting Model Combination
+```{r}
+
+decision_1 <- pred_1
+svm_1 <- data_predictions_1
+nn_0 <- predicted_purchase
+
+decision_1 <- ifelse(decision_1 == "TRUE", 1, 0)
+svm_1 <- ifelse(svm_1 == "Purchase", 1, 0)
+nn_0 <- nn_0
+
+combined_model_super <- decision_1 + svm_1 + nn_0
+combined_model_super <- ifelse(combined_model_super >= 2, 1, 0)
+
+confusionMatrix(as.factor(combined_model_super), as.factor(buy_test$Revenue))
+
+```
+
+This "super" model helped to avoid the dilution of our more successful models,providing a new kappa value of .5864 and an accuracy of 90.51%. This model also includes the benefits of considering the different areas in which each specific model is successful. While some models, like neural networks, provide a higher kappa value, we still believe that this super combined model is valuable in predictions due to the highest accuracy rating and the considerations across several models. When considering purchasing behavior, the client is likely looking for the actual percentage of times in which the model has the correct answer or does not, rather than the theoretical "accurate" accuracy metric, which is why we chose to optimize for that in our prediction model. 
+
+Additionally, if someone was looking at this model and the models used to build it in isolation, we would still have the decision tree model to provide managerial implications, unlike the consideration of a neural network in isolation. The combined helpfulness of these implications that can be used in budgeting website improvements and deciding ad spending with the high accuracy rate makes the slight deficit in kappa a fair trade off in using this combined model for overall predictions. 
+
+Overall, specific factors and insights for the consulting team (annotated throughout) should use logistic and decision tree whereas overall accuracy is best with our super model. 
+
+Data Source: https://www.kaggle.com/roshansharma/online-shoppers-intention
+Variable Explanation Source: https://link.springer.com/article/10.1007/s00521-018-3523-0
